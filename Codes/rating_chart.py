@@ -6,48 +6,59 @@ import os
 import math
 import pytz
 import time
-import asciichartpy as ac
+#import asciichartpy as ac
+from functools import lru_cache
+from enum import Enum
 
+class EnviromentVariableKey(Enum):
+    USERNAME = 'LICHESS_USERNAME'
+    TOKEN = 'LICHESS_TOKEN'
 
-def data_extractor():
-    username = 'YourKingIsInDanger'
-    token = os.environ.get('TOKEN')
-    session = berserk.TokenSession(token)
+@lru_cache(maxsize=32)
+def get_required_os_enviroment_variable(variable_key: str)->str:
+    """ Retreives an environment variable by key and throws an exception if not set
+        raises ValueError if the environment variable is not set """
+    required_value = os.environ.get(variable_key, False) 
+    if not required_value:
+        raise ValueError(f'Environment Variable {variable_key} is not set.')
+    return required_value
+
+def get_username()->str:
+   return get_required_os_enviroment_variable(EnviromentVariableKey.USERNAME.value)
+
+def get_token()->str:
+    return get_required_os_enviroment_variable(EnviromentVariableKey.TOKEN.value)
+
+def get_games()->list:
+    session = berserk.TokenSession(get_token())
     client = berserk.Client(session=session)
-    extract = client.games.export_by_player(username, as_pgn=False, since=None, until=None, 
+    games = client.games.export_by_player(get_username(), as_pgn=False, since=None, until=None, 
                                           max=199, vs=None, rated=True, perf_type='rapid', color=None, 
                                           analysed=None, moves=False, tags=False, evals=False, opening=False)
-    data = list(extract)
-    return data
+    return list(games)
 
+def get_player_colors(white_player_usename: str)->tuple:
+    my_color = 'White' if white_player_usename == getUsername() else 'Black'
+    opponent_color = 'White' if my_color == 'Black' else 'White'
+    return (my_color, opponent_color)
 
-def dict_formation(data):
-    main_dict = {'Played':[], 'My Rating':[], 'Rating Fluctuation':[], 'Opponent Rating': [], 'Winner': [], 'My Color': []}
-    data_length = len(data)
-    for i in range(data_length):
-        if data[i]['players']['white']['user']['id'] == 'yourkingisindanger':
-            main_dict['My Rating'].insert(0,data[i]['players']['white']['rating'])
-            main_dict['Opponent Rating'].insert(0,data[i]['players']['black']['rating'])
-            main_dict['My Color'].insert(0,'White')
-            try:
-                main_dict['Rating Fluctuation'].insert(0,data[i]['players']['white']['ratingDiff'])
-            except:
-                main_dict['Rating Fluctuation'].insert(0,0)
-        else:
-            main_dict['My Rating'].insert(0,data[i]['players']['black']['rating'])
-            main_dict['Opponent Rating'].insert(0,data[i]['players']['white']['rating'])
-            main_dict['My Color'].insert(0,'Black')
-            try:
-                main_dict['Rating Fluctuation'].insert(0,data[i]['players']['black']['ratingDiff'])
-            except:
-                main_dict['Rating Fluctuation'].insert(0,0)
-        main_dict['Played'].insert(0,data[i]['lastMoveAt'].astimezone(pytz.timezone('Asia/Kolkata')))
-        
-        try:
-            main_dict['Winner'].insert(0,data[i]['winner'].capitalize())
-        except:
-            main_dict['Winner'].insert(0,None)
-    return main_dict
+def flatten_games(games: list)->pd.DataFrame:
+    flattened_games:list = []
+    for game in games:
+        my_color, opponent_color = get_player_colors(game['players']['white']['user']['id'])
+        my_rating:str = game['players'][my_color]['rating']
+        rating_diff:str = game['players'][my_color].get('ratingDiff', 0)
+        opponent_rating:str = game['players'][opponent_color]['rating']
+        last_moved_timestamp:str = game['lastMoveAt'].astimezone(pytz.timezone('Asia/Kolkata'))
+        winner:str = game.get('winner', '').capitalize()
+        new_row:dict = {'My Color': my_color,
+                   'My Rating': my_rating,
+                   'Opponent Rating': opponent_rating,
+                   'Rating Fluctuation': rating_diff,
+                   'Played': last_moved_timestamp,
+                   'Winner': winner}
+        flattened_games.append(new_row)
+    return pd.DataFrame(flattened_games)
 
 
 def data_formation(main_dict):
@@ -72,18 +83,24 @@ def data_formation(main_dict):
     Chess_df.drop(columns = ['level_0', 'index', 'Ra', 'dp', 'p', 'My Rating', 
                        'Rating Fluctuation', 'Opponent Rating'], inplace = True)
     return Chess_df
-    
+
+
     
 def main():
-    Chess_df = data_formation(dict_formation(data_extractor()))
-    ratings_list = list(Chess_df['New Rating'])[::-1][0:100][::-1]
-    performance_list = list(Chess_df['Performance'])[::-1][0:100][::-1]
-    result_list = Chess_df['Result'][::-1][0:100][::-1]
-    return (ac.plot(ratings_list, {'height': 15, 'format':'{:4.0f}'})), ratings_list, performance_list, \
-        result_list, list(Chess_df['Played'])[::-1][0].strftime('%a, %d-%b-%Y %I:%M %p %Z')
+    games:list = get_games()
+    flat_games:pd.DataFrame = flatten_games(games)
+
+    #Chess_df = data_formation(dict_formation(data_extractor()))
+    #ratings_list = list(Chess_df['New Rating'])[::-1][0:100][::-1]
+    #performance_list = list(Chess_df['Performance'])[::-1][0:100][::-1]
+    #result_list = Chess_df['Result'][::-1][0:100][::-1]
+    #return (ac.plot(ratings_list, {'height': 15, 'format':'{:4.0f}'})), ratings_list, performance_list, \
+    #    result_list, list(Chess_df['Played'])[::-1][0].strftime('%a, %d-%b-%Y %I:%M %p %Z')
 
 
 if __name__ == "__main__":
+    main()
+    exit()
     plot, rl, pl, res_l, date = main()
     W = res_l.value_counts()[1]
     D = res_l.value_counts()[0.5]
