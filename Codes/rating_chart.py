@@ -6,7 +6,7 @@ import os
 import math
 import pytz
 import time
-#import asciichartpy as ac
+import asciichartpy as ac
 from functools import lru_cache
 from enum import Enum
 
@@ -42,6 +42,12 @@ def get_player_colors(white_player_usename: str)->tuple:
     opponent_color = 'White' if my_color == 'Black' else 'White'
     return (my_color, opponent_color)
 
+def calc_my_score(winner: pd.Series, my_color: str):
+    if winner.isna():
+        return 0.5
+    return 1 if winner == my_color else 0
+
+
 def flatten_games(games: list)->pd.DataFrame:
     flattened_games:list = []
     for game in games:
@@ -60,42 +66,48 @@ def flatten_games(games: list)->pd.DataFrame:
         flattened_games.append(new_row)
     return pd.DataFrame(flattened_games)
 
+def add_calculated_columns(df, k = 100):
+    df['New Rating'] = df['My Rating'] + df['Rating Fluctuation']
+    df['Result'] = df[['My Color', 'Winner']].apply(calc_my_score)
+    df['Ra'] = df['Opponent Rating'].rolling(k).mean()
+    df['p'] = round(df['Result'].rolling(k).sum()/k, 2)
+    return df
 
-def data_formation(main_dict):
+def add_performance_column(df):
+        df['Performance'] = round(['Ra'] + df['dp'], 0)
+        return df
+
+def drop_unused_columns(df: pd.DataFrame):
+    columns_to_drop = ['level_0','index', 'Ra', 'dp', 'p', 'My Rating', 
+                       'Rating Fluctuation', 'Opponent Rating', 'Winner', 'My Color', 'Unnamed: 0']
+    df.drop(columns = columns_to_drop, inplace = True)
+    return df
+
+def get_url_df(url):
     url = 'https://github.com/Laxman-Lakhan/Laxman-Lakhan/blob/d72c599f65d5d4d91742b5ba0842e758094ec852/Codes/dP.csv?raw=true'
-    dP = pd.read_csv(url)
-    dP.drop(['Unnamed: 0'], axis = 1, inplace = True)
-    Chess_df = pd.DataFrame.from_dict(main_dict, orient ='columns')
-    Chess_df.reset_index(inplace = True)
-    Chess_df['New Rating'] = Chess_df['My Rating'] + Chess_df['Rating Fluctuation']
-    Chess_df.loc[Chess_df['Winner'] == Chess_df['My Color'], 'Result'] = 1
-    Chess_df.loc[(Chess_df['Winner'] != Chess_df['My Color']) & (Chess_df['Winner'] != None), 'Result'] = 0
-    Chess_df.loc[Chess_df['Winner'].isna(), 'Result'] = 0.5
-    Chess_df.drop(['Winner', 'My Color'], axis = 1, inplace = True)
-    
-    k = 100
-    Chess_df['Ra'] = Chess_df['Opponent Rating'].rolling(k).mean()
-    Chess_df['p'] = round(Chess_df['Result'].rolling(k).sum()/k, 2)
-    Chess_df = Chess_df.merge(dP, on='p')
-    Chess_df['Performance'] = round(Chess_df['Ra'] + Chess_df['dp'], 0)
-    Chess_df.sort_values('index', inplace = True)
-    Chess_df.reset_index(inplace = True)
-    Chess_df.drop(columns = ['level_0', 'index', 'Ra', 'dp', 'p', 'My Rating', 
-                       'Rating Fluctuation', 'Opponent Rating'], inplace = True)
-    return Chess_df
+    return pd.read_csv(url)
 
+def csv_merge(chess_df:pd.DataFrame, csv_data:pd.DataFrame)->pd.DataFrame:
+    chess_df = chess_df.merge(csv_data, on='p')
+    chess_df.sort_values('index', inplace = True)
+    chess_df.reset_index(inplace = True)
+    return chess_df
 
-    
+def get_plot(serires):
+    config = {'height': 15, 'format':'{:4.0f}'}
+    return ac.plot(serires, config)
+
 def main():
-    games:list = get_games()
-    flat_games:pd.DataFrame = flatten_games(games)
-
-    #Chess_df = data_formation(dict_formation(data_extractor()))
-    #ratings_list = list(Chess_df['New Rating'])[::-1][0:100][::-1]
-    #performance_list = list(Chess_df['Performance'])[::-1][0:100][::-1]
-    #result_list = Chess_df['Result'][::-1][0:100][::-1]
-    #return (ac.plot(ratings_list, {'height': 15, 'format':'{:4.0f}'})), ratings_list, performance_list, \
-    #    result_list, list(Chess_df['Played'])[::-1][0].strftime('%a, %d-%b-%Y %I:%M %p %Z')
+    api_games:list = get_games()
+    flattened_api_games:pd.DataFrame = flatten_games(api_games)
+    csv_data:pd.DataFrame = get_url_df()
+    combined_games = csv_merge(flattened_api_games, csv_data)
+    drop_unused_columns(combined_games)
+    last_hundred_ratings:list = list(combined_games['New Rating'])[-100:]
+    last_hundred_performance:list = list(combined_games['Performance'])[-100:]
+    last_hundred_results:list = list(combined_games['Result'][-100:])
+    last_time_stamp:str = list(combined_games['Played'])[-1].strftime('%a, %d-%b-%Y %I:%M %p %Z')
+    return (get_plot(last_hundred_ratings)), last_hundred_ratings, last_hundred_performance, last_hundred_results, last_time_stamp
 
 
 if __name__ == "__main__":
